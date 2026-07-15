@@ -307,6 +307,49 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 self._chdir(common_dir)
                 self._run_cmd(f"patch -p1 --fuzz=3 < {patch_file}", check=False)
                 self._chdir(self.work_dir)
+        self._fix_susfs_namespace_header()
+
+    def _fix_susfs_namespace_header(self):
+        namespace_c = self.work_dir / "common/fs/namespace.c"
+        if not namespace_c.exists():
+            return
+
+        with open(namespace_c, "r") as f:
+            content = f.read()
+
+        if "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" not in content:
+            return
+
+        modified = False
+        if "#include <linux/susfs_def.h>" not in content:
+            include_block = (
+                "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                "#include <linux/susfs_def.h>\n"
+                "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+            )
+            for anchor in ["#include <linux/mnt_idmapping.h>\n", "#include <linux/shmem_fs.h>\n"]:
+                if anchor in content:
+                    content = content.replace(anchor, anchor + include_block + "\n", 1)
+                    modified = True
+                    break
+
+        extern_block = (
+            "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+            "extern bool susfs_is_current_ksu_domain(void);\n"
+            "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n\n"
+            "#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */\n\n"
+            "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+        )
+        if "extern bool susfs_is_current_ksu_domain(void);" not in content:
+            anchor = '#include "internal.h"\n'
+            if anchor in content:
+                content = content.replace(anchor, anchor + "\n" + extern_block, 1)
+                modified = True
+
+        if modified:
+            logger.info("已补齐 SUSFS namespace.c 头部声明")
+            with open(namespace_c, "w") as f:
+                f.write(content)
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
