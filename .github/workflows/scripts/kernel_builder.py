@@ -443,17 +443,16 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(setlocalversion, "r") as f:
                 content = f.read()
             if safe_custom_version:
-                lines = content.split('\n')
-                for i, line in enumerate(lines):
-                    if 'echo "$res"' in line and not line.strip().startswith('#'):
-                        lines[i] = f'\techo "{safe_custom_version}$res"'
-                        break
-                with open(setlocalversion, "w") as f:
-                    f.write('\n'.join(lines))
+                content = re.sub(
+                    r'(?m)^\s*echo\s+"\$res"\s*$',
+                    f'\techo "{safe_custom_version}$res"',
+                    content,
+                    count=1,
+                )
             if "-dirty" in content:
                 content = content.replace("-dirty", "")
-                with open(setlocalversion, "w") as f:
-                    f.write(content)
+            with open(setlocalversion, "w") as f:
+                f.write(content)
 
         import datetime
         current_time = datetime.datetime.utcnow().strftime("%a %b %d %H:%M:%S UTC %Y")
@@ -508,7 +507,15 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 if config_file.exists():
                     with open(config_file, "r") as f:
                         content = f.read()
-                    content = re.sub(r'^CONFIG_LOCALVERSION=".*"$', f'CONFIG_LOCALVERSION="{self.config.custom_version}"', content, flags=re.MULTILINE)
+                    if re.search(r'^CONFIG_LOCALVERSION=".*"$', content, flags=re.MULTILINE):
+                        content = re.sub(
+                            r'^CONFIG_LOCALVERSION=".*"$',
+                            f'CONFIG_LOCALVERSION="{safe_custom_version}"',
+                            content,
+                            flags=re.MULTILINE,
+                        )
+                    else:
+                        content = content.rstrip() + f'\nCONFIG_LOCALVERSION="{safe_custom_version}"\n'
                     with open(config_file, "w") as f:
                         f.write(content)
                 else:
