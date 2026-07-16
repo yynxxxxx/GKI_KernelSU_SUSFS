@@ -438,23 +438,23 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         safe_custom_version = ""
         if self.config.custom_version:
             safe_custom_version = self.config.custom_version.rstrip('-')[:MAX_CUSTOM_LEN]
+        use_legacy_build = (self.work_dir / "build/build.sh").exists()
 
         setlocalversion = self.work_dir / "common/scripts/setlocalversion"
         if setlocalversion.exists():
             with open(setlocalversion, "r") as f:
                 content = f.read()
-            if safe_custom_version:
-                lines = content.split('\n')
-                for i, line in enumerate(lines):
-                    if 'echo "$res"' in line and not line.strip().startswith('#'):
-                        lines[i] = f'\techo "{safe_custom_version}$res"'
-                        break
-                with open(setlocalversion, "w") as f:
-                    f.write('\n'.join(lines))
+            if safe_custom_version and use_legacy_build:
+                content = re.sub(
+                    r'(?m)^\s*echo\s+"\$res"\s*$',
+                    f'\techo "{safe_custom_version}$res"',
+                    content,
+                    count=1,
+                )
             if "-dirty" in content:
                 content = content.replace("-dirty", "")
-                with open(setlocalversion, "w") as f:
-                    f.write(content)
+            with open(setlocalversion, "w") as f:
+                f.write(content)
 
         import datetime
         current_time = datetime.datetime.utcnow().strftime("%a %b %d %H:%M:%S UTC %Y")
@@ -476,7 +476,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 with open(init_makefile, "w") as f:
                     f.write(content)
 
-        if not (self.work_dir / "build/build.sh").exists():
+        if not use_legacy_build:
             bazel_build = self.work_dir / "common/BUILD.bazel"
             if bazel_build.exists():
                 with open(bazel_build, "r") as f:
@@ -507,9 +507,26 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             if self.config.custom_version:
                 config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
                 if config_file.exists():
+                    bazel_custom_version = safe_custom_version
+                    makefile = self.work_dir / "common/Makefile"
+                    if makefile.exists():
+                        with open(makefile, "r") as f:
+                            makefile_content = f.read()
+                        match = re.search(r'^EXTRAVERSION\s*=\s*(\S*)\s*$', makefile_content, flags=re.MULTILINE)
+                        if match and bazel_custom_version.startswith(match.group(1)):
+                            bazel_custom_version = bazel_custom_version[len(match.group(1)):]
+
                     with open(config_file, "r") as f:
                         content = f.read()
-                    content = re.sub(r'^CONFIG_LOCALVERSION=".*"$', f'CONFIG_LOCALVERSION="{self.config.custom_version}"', content, flags=re.MULTILINE)
+                    if re.search(r'^CONFIG_LOCALVERSION=".*"$', content, flags=re.MULTILINE):
+                        content = re.sub(
+                            r'^CONFIG_LOCALVERSION=".*"$',
+                            f'CONFIG_LOCALVERSION="{bazel_custom_version}"',
+                            content,
+                            flags=re.MULTILINE,
+                        )
+                    else:
+                        content = content.rstrip() + f'\nCONFIG_LOCALVERSION="{bazel_custom_version}"\n'
                     with open(config_file, "w") as f:
                         f.write(content)
                 else:
